@@ -1,0 +1,21 @@
+[project]
+name = "langchain-docs-rag"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "black>=26.5.1",
+    "firecrawl-py>=4.45.0",
+    "isort>=9.0.2",
+    "langchain-pinecone>=0.2.13",
+    "langchain>=1.4.3",
+    "langchain-huggingface>=1.2.2",
+    "langchain-openrouter>=0.2.9",
+    "langchain-text-splitters>=1.1.2",
+    "langsmith>=0.14.1",
+    "python-dotenv>=1.2.3",
+    "sentence-transformers>=6.0.1",
+    "unstructured>=0.18.32",
+    "langchain-tavily>=0.2.18",
+]
