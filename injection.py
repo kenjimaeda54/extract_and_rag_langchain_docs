@@ -1,10 +1,14 @@
+import hashlib
 import os
+from uuid import uuid4
 
 from dotenv import load_dotenv
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from langchain_tavily import TavilyCrawl, TavilyExtract, TavilyMap
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langsmith import traceable
 
 OPEN_ROUTER_API_KEY = os.environ.get("OPEN_ROUTER_API_KEY")
 PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
@@ -12,7 +16,9 @@ PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
 
 load_dotenv()
 
-embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+embeddings = HuggingFaceEmbeddings(
+    model_name="sentence-transformers/all-MiniLM-L6-v2",
+)
 
 tavily_crawl = TavilyCrawl()
 
@@ -76,7 +82,7 @@ pinecone_vectorstore = PineconeVectorStore(
 
 )
 
-
+@traceable(name="injection")
 def main():
     ##existe abaixo a opção instructions
     ##e util quando queremos um rasp mais especifico, por exemplo, extrair apenas os títulos de uma página
@@ -94,7 +100,23 @@ def main():
         for result in results["results"]
         if  result.get("raw_content")
     ]# so pega conteudos que existem por isso if result.get("raw_content") haviam conteudos vindo None
-    print(f"Number of documents extracted: {len(all_documents)}")
+
+    recursive_character = RecursiveCharacterTextSplitter(chunk_size=4000, chunk_overlap=200)
+    chunks = recursive_character.split_documents(all_documents)
+    ids = [
+        hashlib.sha256(f"{c.metadata['source']}::{c.page_content}".encode()).hexdigest()
+        for c in chunks
+    ]
+    pinecone_vectorstore.add_documents(chunks, ids=ids,batch_size=100)
+
+
+
+
+    #para enviar ao langsmith
+    return {
+        "documents": all_documents,
+        "num_documents": len(all_documents)
+    }
 
 
 

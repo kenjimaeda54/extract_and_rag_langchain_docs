@@ -18,4 +18,5 @@ dependencies = [
     "sentence-transformers>=6.0.1",
     "unstructured>=0.18.32",
     "langchain-tavily>=0.2.18",
+    "streamlit>=1.65.0",
 ]
