@@ -10,10 +10,11 @@ Chatbot de perguntas sobre a documentação do LangChain. Usa **Agentic RAG**: u
 2. [Tipos de RAG: Clássico, Agentic e Hybrid](#tipos-de-rag-clássico-agentic-e-hybrid)
 3. [Por que este projeto é Agentic RAG](#por-que-este-projeto-é-agentic-rag)
 4. [Arquitetura do sistema](#arquitetura-do-sistema)
-5. [Como os Sources são exibidos](#como-os-sources-são-exibidos)
-6. [Decisões de implementação (para consulta futura)](#decisões-de-implementação-para-consulta-futura)
-7. [Pipeline de injeção (indexação)](#pipeline-de-injeção-indexação)
-8. [Como rodar](#como-rodar)
+5. [Frontend com Streamlit](#frontend-com-streamlit)
+6. [Como os Sources são exibidos](#como-os-sources-são-exibidos)
+7. [Decisões de implementação (para consulta futura)](#decisões-de-implementação-para-consulta-futura)
+8. [Pipeline de injeção (indexação)](#pipeline-de-injeção-indexação)
+9. [Como rodar](#como-rodar)
 
 ---
 
@@ -214,7 +215,7 @@ Checklist baseado no código real:
 │                                                         │
 │  run_llm(query) → {answer, context}                     │
 │    - extrai artifact das ToolMessage                    │
-│    - deduplica por source + hash do conteúdo            │
+│    - retorna lista de Document para a UI                │
 └─────────────────────────────────────────────────────────┘
                             │
                             ▼
@@ -255,13 +256,111 @@ O `Document` carrega `metadata["source"]` com a URL da docs LangChain. Sem esse 
 
 ### 2. `run_llm` extrai os artifacts
 
-Depois do `agent.invoke`, o código percorre as mensagens, acha as `ToolMessage`, lê o `.artifact` e monta `context_docs` (com deduplicação).
+Depois do `agent.invoke`, o código percorre as mensagens, acha as `ToolMessage`, lê o `.artifact` e monta `context_docs`.
+
+> **Nota:** nesta versão o código faz `context_docs.extend(message.artifact)` — se a tool for chamada 2x, o mesmo chunk pode aparecer duas vezes. Deduplicar (ex.: `sha256(source + page_content)`) é um improvement natural para o futuro.
 
 ### 3. Streamlit formata e exibe
 
-`_format_sources` extrai `metadata["source"]` de cada doc (sem repetir URL) e o UI mostra num `st.expander("Sources")`.
+`_format_sources` extrai `metadata["source"]` de cada doc e o UI mostra num `st.expander("Sources")`.
 
 **Resumo:** o artifact é a "prova documental" que viaja junto com a resposta do agente — é isso que torna a exibição de Sources possível.
+
+---
+
+## Frontend com Streamlit
+
+A UI é um chat simples em `main.py`. Streamlit roda o script de cima para baixo a cada interação (rerun) — por isso o estado precisa ficar em `st.session_state`.
+
+### Como o chat foi construído
+
+| Peça | Código | Papel |
+|---|---|---|
+| Config da página | `st.set_page_config(page_title=..., layout="centered")` | título da aba e layout |
+| Sidebar | `with st.sidebar:` | botão "Clear chat" |
+| Estado da conversa | `st.session_state.messages` | lista de dicts `{role, content, sources}` |
+| Bolha do chat | `st.chat_message("user" \| "assistant")` | moldura visual de cada turno |
+| Markdown | `st.markdown(...)` | renderiza a resposta (e as URLs como lista) |
+| Caixa de envio | `st.chat_input(...)` | retorna o texto digitado (ou `None`) |
+| Loading | `st.spinner(...)` | mostra "Retrieving docs..." enquanto o backend roda |
+| Sources | `st.expander("Sources")` | seção recolhida/aberta com as URLs |
+| Erro | `st.error` + `st.exception` | mostra falha do backend sem quebrar a UI |
+| Tema | `streamlit/config.toml` | cores dark + cor primária verde |
+
+### Ciclo de vida de uma mensagem
+
+```
+1. Usuário digita em st.chat_input
+        │
+        ▼
+2. Script roda de novo (rerun do Streamlit)
+        │
+        ├─ append da mensagem do usuário em session_state
+        ├─ renderiza o histórico todo (for msg in session_state.messages)
+        │
+        ▼
+3. Bloco com a nova pergunta
+        │
+        ├─ st.chat_message("user") → mostra o prompt
+        └─ st.chat_message("assistant")
+                │
+                ├─ st.spinner + run_llm(prompt)
+                ├─ st.markdown(answer)
+                ├─ expander com sources (se houver)
+                └─ append da resposta em session_state
+        │
+        ▼
+4. Próximo rerun já re-renderiza o chat completo com o histórico salvo
+```
+
+### Por que `st.session_state`?
+
+O Streamlit **não mantém variáveis Python** entre execuções do script. Sem o session state, cada pergunta apagaria o histórico da tela.
+
+Padrão usado:
+
+```python
+if "messages" not in st.session_state:
+    st.session_state.messages = [mensagem_boas_vindas]
+
+# ao chegar resposta:
+st.session_state.messages.append(
+    {"role": "assistant", "content": answer, "sources": sources}
+)
+```
+
+Cada item guarda **role**, **content** e **sources** juntos — assim o rerun consegue redesenhar o expander sem reprocessar o LLM.
+
+### Clear chat
+
+```python
+if st.button("Clear chat"):
+    st.session_state.pop("messages", None)
+    st.rerun()
+```
+
+Remove o histórico e força um novo rerun; o `if "messages" not in ...` recria a mensagem inicial.
+
+### Separação UI ↔ Backend
+
+- `main.py` **não** conhece LangChain, Pinecone nem o agente — só chama `run_llm` e pinta o resultado
+- `backend/core.py` **não** conhece Streamlit — devolve `{answer, context}`
+- A ponte é um dicionário simples; `_format_sources` converte `Document` → lista de strings para a UI
+
+Isso facilita testar o backend (`uv run backend/core.py`) sem subir a interface.
+
+### Tema
+
+`streamlit/config.toml` (precisa estar em `.streamlit/` para o Streamlit carregar automaticamente):
+
+```toml
+[theme]
+primaryColor = "#4CAF50"
+backgroundColor = "#1E1E1E"
+secondaryBackgroundColor = "#252526"
+textColor = "#FFFFFF"
+font = "sans serif"
+```
 
 ---
 
@@ -286,9 +385,9 @@ agent = create_agent(model=model, tools=[retrieve_context], system_prompt=SYSTEM
 
 Se ficasse **dentro** de `run_llm`, toda chamada recriaria o agente (recria modelo, tools, etc.) — ineficiente. Instanciar no módulo reutiliza o mesmo agente em todas as perguntas da sessão.
 
-### Por que deduplicar `context_docs`?
+### Por que deduplicar `context_docs`? (melhoria futura)
 
-Se o agente chamar `retrieve_context` duas vezes (ou o mesmo chunk voltar em buscas diferentes), a lista de artifacts acumularia duplicatas. A deduplicação usa:
+Hoje o código usa `extend` e **não** remove duplicatas. Se a tool for chamada duas vezes (ou o mesmo chunk voltar), sources podem aparecer repetidos. A deduplicação típica usa:
 
 ```
 key = sha256(source + page_content)
